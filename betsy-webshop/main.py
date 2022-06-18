@@ -2,17 +2,22 @@ __winc_id__ = "d7b474e9b3a54d23bca54879a4f1855b"
 __human_name__ = "Betsy Webshop"
 
 import models
-from models import User, Tag, Product, UserProduct, ProductTag
+from models import User, Tag, Product, Purchase, UserProduct, ProductTag
 from peewee import fn, SqliteDatabase
 
 
 def search(term):
-    return (Product.select()
+    products = (Product.select()
         .where(
             fn.Lower(Product.name.contains(fn.Lower(term))) |
             fn.Lower(Product.description.contains(fn.Lower(term)))
         ))
-
+    if len(products) > 0:
+        print("In stock:")
+        for product in products:
+            return f"Product name: {product.name}, price per unit: €{product.price}, available quantity: {product.quantity}"
+    else:
+        return f"No {term} available"
 
 def list_user_products(user_id):
     products_query = (UserProduct.select(Product)
@@ -26,8 +31,8 @@ def list_user_products(user_id):
 
 
 def list_products_per_tag(tag_id):
-    query = (ProductTag.select(models.Tag.name.alias('tag_name'),
-                            Product.name.alias('name'))
+    query = (ProductTag.select(models.Tag.name.alias("tag_name"),
+                            Product.name.alias("name"))
             .join(models.Tag,
                 on=(models.Tag.id == ProductTag.tag_id))
             .join(Product,
@@ -38,46 +43,61 @@ def list_products_per_tag(tag_id):
 
 
 def add_product_to_catalog(user_id, product):
-    new_product = Product.create(name=product['name'],
-                            description=product['description'],
-                            price=product['price'],
-                            quantity=product['quantity'],
-                            )
-
-    tags_to_add = []
-    for tag in product['tags']:
-        new_tag, _ = Tag.get_or_create(name=tag)
-        tags_to_add.append(new_tag)
-        
-    new_product.tags.add(tags_to_add)
+    Product.create(
+        name=product[0],
+        description=product[1],
+        price=product[2],
+        quantity=product[3],
+        tag=user_id),
     
-    UserProduct.create(user_id=user_id, product_id=new_product)
-    
-    return new_product.id
-
+    return f"{product[3]} units of {product[0]} were added to the database"
 
 
 def update_stock(product_id, new_quantity):
-    return (Product.update(quantity=new_quantity)
+    try:
+        (Product
+            .update(quantity=new_quantity)
             .where(Product.id == product_id)
             .execute())
+        return "Stock is updated"
+    except Exception:
+        return "Unfortunately this product is not available"
 
 
-def purchase_product(product_id, buyer_id, quantity):
-    return (models.Purchase.insert(product_id=product_id,
-                                user_id=buyer_id,
+def purchase_product(product_id, user_id, quantity):
+    try:
+        product = Product.get_by_id(product_id)
+        old_quantity = product.quantity
+
+        if quantity <= old_quantity:
+            (Purchase.insert(user_id=user_id,
+                                product_id=product_id,
                                 quantity=quantity)
                                 .execute())
 
+            new_quantity = (old_quantity - quantity)
+            update_stock(product_id, new_quantity)
+            return f"You are buying {quantity} x {product.name} for €{product.price} per unit"
+        else:
+            return f"There are {old_quantity} units of {product.name} available, please adjust the quantity"
+    except Exception:
+        return "Unfortunately this product is not available"
+
 
 def remove_product(product_id):
-    return (UserProduct.delete()
+    try:
+        (UserProduct.delete()
               .where(UserProduct.product_id == product_id)
               .execute())
+        return f"Product is removed"
+
+    except Exception:
+        return "No product available with this id"
+
 
 
 def create_tables():
-    db = SqliteDatabase(":memory:", pragmas={'foreign_keys': 1})
+    db = SqliteDatabase(":memory:", pragmas={"foreign_keys": 1})
     with db:
         db.create_tables([models.User,
                           models.Product,
@@ -103,9 +123,9 @@ def data():
     ]
 
     product_data = [
-        ["Kandelaar", "Kaarsenhouder", 12, 10],
-        ["Vogelhuisje", "Voederplaats voor vogels", 6.5, 10],
-        ["Badmat", "Ter decoratie van badkamer", 10, 15],
+        ["Candlestick", "Candle holder", 12, 10],
+        ["Birdhouse", "Nesting and feeding site for birds", 6.5, 10],
+        ["Bath mat", "Bathroom decoration", 10, 15],
     ]
 
     tag_data = [
@@ -185,3 +205,7 @@ def data():
 if __name__ == "__main__":    
     create_tables()
     data()
+    print(search("candlestick"))
+    print(add_product_to_catalog(15, ["Table cloth", "Table decoration", 22, 8]))
+    print(list_user_products(2))
+    print(purchase_product(3, 2, 1))
